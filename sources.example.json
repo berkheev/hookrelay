@@ -1,0 +1,26 @@
+{
+    "github": {
+        "secret": "change-me",
+        "signature_header": "X-Hub-Signature-256",
+        "idempotency_header": "X-GitHub-Delivery",
+        "destinations": [
+            "http://ci.local:8000/_sink/ok",
+            "http://chat.local:8000/_sink/flaky"
+        ]
+    },
+    "billing": {
+        "secret": "change-me-too",
+        "signature_header": "X-Signature-256",
+        "idempotency_header": "Idempotency-Key",
+        "forward_secret": "downstream-secret",
+        "destinations": [
+            "http://ledger.local:8000/_sink/ok",
+            "http://analytics.local:8000/_sink/down"
+        ]
+    },
+    "legacy-crm": {
+        "destinations": [
+            "http://crm.local:8000/_sink/reject"
+        ]
+    }
+}
