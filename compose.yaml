@@ -1,0 +1,93 @@
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/php/Dockerfile
+    target: dev
+    args:
+      UID: ${UID:-1000}
+      GID: ${GID:-1000}
+  image: hookrelay-dev
+  volumes:
+    - .:/app
+    - composer-cache:/tmp/composer
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  # HTTP: webhook ingest, REST API and dashboard (Laravel Octane on Swoole)
+  app:
+    <<: *app
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    command: php artisan octane:start --server=swoole --host=0.0.0.0 --port=8000 --workers=4
+    networks:
+      default:
+        # Fake destinations for the demo (see /_sink routes), one host each so the circuit breaker can tell them apart.
+        aliases: [ci.local, chat.local, ledger.local, analytics.local, crm.local]
+
+  # RabbitMQ consumers that perform the actual HTTP deliveries
+  consumer:
+    <<: *app
+    command: php artisan hookrelay:consume
+    deploy:
+      replicas: 2
+
+  # Cron: re-queues stuck deliveries, prunes old events
+  scheduler:
+    <<: *app
+    command: php artisan schedule:work
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hookrelay
+      POSTGRES_USER: hookrelay
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${DB_FORWARD_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hookrelay -d hookrelay"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: hookrelay
+      RABBITMQ_DEFAULT_PASS: secret
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "${RABBITMQ_UI_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  composer-cache:
+  postgres-data:
+  redis-data:
+  rabbitmq-data:
